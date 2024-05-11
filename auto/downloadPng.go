@@ -2,9 +2,12 @@ package auto
 
 import (
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -38,8 +41,14 @@ func downloadPng(imgObj map[string]string) {
 	}
 	defer response.Body.Close()
 
-	fileName := getFileName(imgObj["fileName"])
-	newPath := "../png/"
+	absPath := imgObj["absPath"]
+
+	fileName := filepath.Base(absPath)
+
+	dirPath := filepath.Dir(absPath)
+
+	newPath := filepath.Join(filepath.Join(dirPath, "\\compressed"))
+
 	// 检查目录是否存在
 	if _, err := os.Stat(newPath); os.IsNotExist(err) {
 		// 目录不存在，创建它
@@ -47,7 +56,8 @@ func downloadPng(imgObj map[string]string) {
 		if err != nil {
 		}
 	}
-	file, err := os.Create(newPath + fileName)
+
+	file, err := os.Create(filepath.Join(newPath, fileName))
 	if err != nil {
 		fmt.Println("Error creating file:", err)
 		return
@@ -59,7 +69,7 @@ func downloadPng(imgObj map[string]string) {
 		return
 	}
 
-	fmt.Println("Png downloaded and saved successfully:", fileName)
+	log.Println("Png downloaded and saved successfully:", fileName)
 }
 
 func getFileName(url string) string {
@@ -68,4 +78,48 @@ func getFileName(url string) string {
 	fileName := url[strings.LastIndex(url, "/")+1:]
 
 	return fileName
+}
+
+func IsImage(filePath string) bool {
+	ext := filepath.Ext(filePath)
+	switch ext {
+	case ".png", ".jpg", ".jpeg":
+		return true
+	}
+	return false
+
+}
+func WatchFolder(dirPath string) (<-chan string, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	files := make(chan string)
+	go func() {
+		defer close(files)
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					files <- event.Name
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Println("error:", err)
+			}
+		}
+	}()
+
+	err = watcher.Add(dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
