@@ -1,2 +1,4 @@
 /png/
 *.exe
+git config http.proxy http://localhost:7890
+git config  https.proxy http://localhost:7890
