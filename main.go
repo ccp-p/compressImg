@@ -15,10 +15,6 @@ import (
 	"time"
 )
 
-var (
-	Logger *log.Logger
-)
-
 type myService struct {
 	stopChan chan struct{}
 }
