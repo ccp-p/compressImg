@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"test/logger"
 )
 
 //imgObj := map[string]string{"url": location, "fileName": "1.png"}
@@ -23,6 +24,7 @@ func Downloaded(urls []map[string]string) {
 
 		go func(imgObj map[string]string) {
 			println(imgObj)
+			logger.Logger.Println(imgObj)
 			defer wg.Done()
 			downloadPng(imgObj)
 		}(imgObj)
@@ -30,10 +32,12 @@ func Downloaded(urls []map[string]string) {
 
 	wg.Wait()
 	fmt.Println("All images downloaded and saved successfully.")
+	logger.Logger.Println("All images downloaded and saved successfully.")
 }
 
 func downloadPng(imgObj map[string]string) {
 	fmt.Println("Downloading png from", imgObj["url"])
+	logger.Logger.Println("Downloading png from", imgObj["url"])
 	response, err := http.Get(imgObj["url"])
 	if err != nil {
 		fmt.Println("Error downloading png:", err)
@@ -60,6 +64,7 @@ func downloadPng(imgObj map[string]string) {
 	file, err := os.Create(filepath.Join(newPath, fileName))
 	if err != nil {
 		fmt.Println("Error creating file:", err)
+		logger.Logger.Println("Error creating file:", err)
 		return
 	}
 	defer file.Close()
@@ -91,6 +96,8 @@ func IsImage(filePath string) bool {
 }
 func WatchFolder(dirPath string) (<-chan string, error) {
 	watcher, err := fsnotify.NewWatcher()
+	fmt.Println("watcher:", watcher)
+	logger.Logger.Println("watcher:", watcher)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +108,21 @@ func WatchFolder(dirPath string) (<-chan string, error) {
 		for {
 			select {
 			case event, ok := <-watcher.Events:
+				fmt.Println("event====", event)
+				logger.Logger.Println("event===", event)
 				if !ok {
 					return
 				}
-				if event.Op&fsnotify.Write == fsnotify.Write {
+				//创建文件
+				stand := event.Op&fsnotify.Create == fsnotify.Create || event.Op&fsnotify.Write == fsnotify.Write
+				if stand {
 					files <- event.Name
+					fmt.Println("Modified file:", event.Name)
+					logger.Logger.Println("Modified file:", event.Name)
 				}
 			case err, ok := <-watcher.Errors:
+				fmt.Println("error:", err)
+				logger.Logger.Println("error:", err)
 				if !ok {
 					return
 				}

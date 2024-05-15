@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"golang.org/x/sys/windows/svc"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -10,9 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"test/auto"
+	"test/logger"
 	"time"
+)
 
-	"golang.org/x/sys/windows/svc"
+var (
+	Logger *log.Logger
 )
 
 type myService struct {
@@ -62,20 +66,38 @@ func (m *myService) main(changes chan<- svc.Status) {
 	defaultPath := "C:\\Users\\83795\\Downloads"
 	args := os.Args
 
-	var folderPath string
+	folderPath := defaultPath
 	if len(args) > 1 {
 		// 如果传入了参数，使用传入的文件夹路径
-		folderPath = args[1]
-	} else {
-		// 如果没有传入参数，使用默认的文件夹路径
-		folderPath = defaultPath
+		//如果参数是--test则使用默认路径
+		if args[1] != "--test" {
+			folderPath = args[1]
+		}
+
 	}
+	// Create a logs directory in the folderPath
+	logsPath := filepath.Join(folderPath, "logs")
+	if _, err := os.Stat(logsPath); os.IsNotExist(err) {
+		err := os.MkdirAll(logsPath, os.ModePerm)
+		if err != nil {
+			log.Fatalf("Failed to create logs directory: %v", err)
+		}
+	}
+
+	// Create a log file in the logs directory
+	logFile, err := os.OpenFile(filepath.Join(logsPath, "log.txt"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+	logger.InitLogger(logFile)
 
 	files, err := auto.WatchFolder(folderPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("files:", files)
+	log.Println("files:", files, "folderPath:", folderPath)
+	logger.Logger.Println("files:", files, "folderPath:", folderPath)
 
 	for {
 		select {
@@ -92,8 +114,7 @@ func (m *myService) main(changes chan<- svc.Status) {
 				if _, err := os.Stat(filePath); os.IsNotExist(err) {
 					continue
 				}
-
-				log.Println("Modified file:", filePath)
+				logger.Logger.Println("Modified file:", filePath)
 				// 添加延迟
 				time.Sleep(1 * time.Second)
 				fileData, err := ioutil.ReadFile(filePath)
@@ -120,6 +141,7 @@ func (m *myService) main(changes chan<- svc.Status) {
 
 				if err != nil {
 					log.Println("Error deleting file:", err)
+					logger.Logger.Println("Error deleting file:", err)
 					continue
 				}
 			}
@@ -129,10 +151,11 @@ func (m *myService) main(changes chan<- svc.Status) {
 
 func compress(location string, absPath string) {
 	fmt.Println("Absolute path:", absPath)
+	logger.Logger.Println("Absolute path:", absPath)
 	imgObj := map[string]string{"url": location, "fileName": absPath, "absPath": absPath}
 	urls := []map[string]string{imgObj}
 	fmt.Println(location)
-
+	logger.Logger.Println(location)
 	auto.Downloaded(urls)
 }
 
@@ -141,9 +164,16 @@ func generateIp() string {
 }
 
 func main() {
-	err := svc.Run("CompressImg", &myService{stopChan: make(chan struct{})})
-	if err != nil {
-		log.Fatal(err)
+	if len(os.Args) > 1 && os.Args[1] == "--test" {
+		println("Running in test mode")
+		m := &myService{stopChan: make(chan struct{})}
+		m.main(nil)
+	} else {
+		err := svc.Run("CompressImg", &myService{stopChan: make(chan struct{})})
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Service stopped")
 	}
-	fmt.Println("Service stopped")
+
 }
