@@ -2,7 +2,6 @@ package auto
 
 import (
 	"fmt"
-	"github.com/fsnotify/fsnotify"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"test/logger"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 //imgObj := map[string]string{"url": location, "fileName": "1.png"}
@@ -48,6 +49,8 @@ func downloadPng(imgObj map[string]string) {
 	absPath := imgObj["absPath"]
 
 	fileName := filepath.Base(absPath)
+	// 如果源图片名包含@2x，去掉这个后缀
+	fileName = strings.Replace(fileName, "@2x", "", -1)
 
 	dirPath := filepath.Dir(absPath)
 

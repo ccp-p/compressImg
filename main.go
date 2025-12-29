@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
-	"golang.org/x/sys/windows/svc"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -13,6 +13,10 @@ import (
 	"test/auto"
 	"test/logger"
 	"time"
+
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 type myService struct {
@@ -160,16 +164,194 @@ func generateIp() string {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--test" {
+	// 定义命令行参数
+	install := flag.Bool("install", false, "安装服务")
+	remove := flag.Bool("remove", false, "卸载服务")
+	start := flag.Bool("start", false, "启动服务")
+	stop := flag.Bool("stop", false, "停止服务")
+	testMode := flag.Bool("test", false, "测试模式运行")
+
+	// 解析参数，注意：os.Args[1] == "--test" 的原有逻辑会被 flag 包覆盖，
+	// 所以这里统一使用 flag 解析。如果用户输入 --test，flag.Parse() 会处理。
+	flag.Parse()
+
+	serviceName := "CompressImg"
+	serviceDesc := "Image Compression Service"
+
+	if *install {
+		err := installService(serviceName, serviceDesc)
+		if err != nil {
+			log.Fatalf("安装服务失败: %v", err)
+		}
+		log.Println("服务安装成功")
+		return
+	}
+
+	if *remove {
+		err := removeService(serviceName)
+		if err != nil {
+			log.Fatalf("卸载服务失败: %v", err)
+		}
+		log.Println("服务卸载成功")
+		return
+	}
+
+	if *start {
+		err := startService(serviceName)
+		if err != nil {
+			log.Fatalf("启动服务失败: %v", err)
+		}
+		log.Println("服务启动成功")
+		return
+	}
+
+	if *stop {
+		err := stopService(serviceName)
+		if err != nil {
+			log.Fatalf("停止服务失败: %v", err)
+		}
+		log.Println("服务停止成功")
+		return
+	}
+
+	// 兼容旧的参数检查方式，或者直接使用 flag 的 testMode
+	isTest := *testMode
+	if !isTest && len(os.Args) > 1 && os.Args[1] == "--test" {
+		isTest = true
+	}
+
+	if isTest {
 		println("Running in test mode")
 		m := &myService{stopChan: make(chan struct{})}
 		m.main(nil)
 	} else {
-		err := svc.Run("CompressImg", &myService{stopChan: make(chan struct{})})
+		isIntSess, err := svc.IsAnInteractiveSession()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("无法判断是否为交互式会话: %v", err)
 		}
-		fmt.Println("Service stopped")
+		if !isIntSess {
+			err := svc.Run(serviceName, &myService{stopChan: make(chan struct{})})
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println("Service stopped")
+		} else {
+			fmt.Println("请使用 --install, --start, --stop, --remove 或 --test 参数运行")
+		}
+	}
+}
+
+// 注册服务
+func installService(name, desc string) error {
+	exepath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(name)
+	if err == nil {
+		s.Close()
+		return fmt.Errorf("服务 %s 已经存在", name)
+	}
+	s, err = m.CreateService(name, exepath, mgr.Config{DisplayName: desc, StartType: mgr.StartAutomatic})
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	// 确保事件日志的来源名称与服务名称一致
+	err = eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info)
+	if err != nil {
+		s.Delete()
+		return fmt.Errorf("安装事件日志失败: %s", err)
+	}
+	return nil
+}
+
+// 卸载服务
+func removeService(name string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(name)
+	if err != nil {
+		return fmt.Errorf("服务 %s 不存在", name)
+	}
+	defer s.Close()
+
+	err = s.Delete()
+	if err != nil {
+		return err
 	}
 
+	err = eventlog.Remove(name)
+	if err != nil {
+		return fmt.Errorf("删除事件日志失败: %s", err)
+	}
+	return nil
+}
+
+// 实现启动服务的函数
+func startService(name string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(name)
+	if err != nil {
+		return fmt.Errorf("服务 %s 不存在", name)
+	}
+	defer s.Close()
+
+	err = s.Start()
+	if err != nil {
+		return fmt.Errorf("启动服务失败: %v", err)
+	}
+
+	return nil
+}
+
+// 实现停止服务的函数
+func stopService(name string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(name)
+	if err != nil {
+		return fmt.Errorf("服务 %s 不存在", name)
+	}
+	defer s.Close()
+
+	status, err := s.Control(svc.Stop)
+	if err != nil {
+		return fmt.Errorf("停止服务失败: %v", err)
+	}
+
+	// 等待服务停止
+	timeout := time.Now().Add(20 * time.Second)
+	for status.State != svc.Stopped {
+		if time.Now().After(timeout) {
+			return fmt.Errorf("服务停止超时")
+		}
+		time.Sleep(300 * time.Millisecond)
+		status, err = s.Query()
+		if err != nil {
+			return fmt.Errorf("查询服务状态失败: %v", err)
+		}
+	}
+
+	return nil
 }
