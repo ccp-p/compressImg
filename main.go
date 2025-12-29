@@ -23,10 +23,13 @@ type myService struct {
 	stopChan chan struct{}
 }
 
+// Execute 是 svc.Handler 接口必须实现的方法，用于接收 Windows 服务控制命令
+// 这里的逻辑非常重要，不能删除，否则无法通过 svc.Run 运行服务
 func (m *myService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
 	changes <- svc.Status{State: svc.StartPending}
-	go m.main(changes)
+	// 启动主逻辑，重命名为 run 以避免混淆，并移除了未使用的 changes 参数
+	go m.run()
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 loop:
 	for {
@@ -51,7 +54,7 @@ loop:
 	return
 }
 
-func (m *myService) main(changes chan<- svc.Status) {
+func (m *myService) run() {
 	client := &http.Client{}
 	req, err := http.NewRequest("POST", "https://tinypng.com/backend/opt/shrink", nil)
 	if err != nil {
@@ -223,7 +226,7 @@ func main() {
 	if isTest {
 		println("Running in test mode")
 		m := &myService{stopChan: make(chan struct{})}
-		m.main(nil)
+		m.run()
 	} else {
 		isIntSess, err := svc.IsAnInteractiveSession()
 		if err != nil {
